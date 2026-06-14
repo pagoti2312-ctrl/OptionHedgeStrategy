@@ -438,6 +438,7 @@ async def get_trade_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 _bot_app: Application | None = None
 _bot_loop: asyncio.AbstractEventLoop | None = None
+_bot_initialized: bool = False
 
 WEBHOOK_PATH = "/telegram/webhook"
 
@@ -547,13 +548,18 @@ def _lazy_init_bot():
     """Initialise the bot and register the webhook on the first real request.
 
     Skipped for /health so that the load-balancer health check never blocks
-    on Telegram API calls.  Both functions are idempotent, so subsequent
-    requests are a no-op after the first successful initialisation.
+    on Telegram API calls.  After the first successful initialisation the
+    flag is set and all subsequent requests return immediately without
+    touching the Telegram API.
     """
+    global _bot_initialized
+    if _bot_initialized:
+        return
     if request.path == "/health":
         return
     _ensure_bot_initialized()
     _register_webhook()
+    _bot_initialized = True
 
 
 @flask_app.route(WEBHOOK_PATH, methods=["POST"])
