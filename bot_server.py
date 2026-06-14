@@ -475,15 +475,17 @@ def index():
     }), 200
 
 
-if __name__ == "__main__":
-    # Start the Telegram bot polling in a background daemon thread so it
-    # doesn't block the Flask HTTP server.
-    bot_thread = threading.Thread(target=start_bot, name="telegram-bot", daemon=True)
-    bot_thread.start()
-    logger.info("Telegram bot thread started.")
+# ---------------------------------------------------------------------------
+# Start the Telegram bot polling in a background daemon thread at import time
+# so it runs whether the module is executed directly or loaded by gunicorn.
+# ---------------------------------------------------------------------------
+bot_thread = threading.Thread(target=start_bot, name="telegram-bot", daemon=True)
+bot_thread.start()
+logger.info("Telegram bot thread started.")
 
-    # Start the Flask HTTP server on 0.0.0.0:5000 (foreground — keeps the
-    # process alive and answers Railway's health checks).
-    port = int(os.environ.get("PORT", 5000))
-    logger.info(f"Starting Flask HTTP server on 0.0.0.0:{port} ...")
-    flask_app.run(host="0.0.0.0", port=port, debug=False)
+if __name__ == "__main__":
+    # When run directly (e.g. for local development), start gunicorn
+    # programmatically or just let the module-level thread keep the process
+    # alive via the gunicorn start command.  For convenience, a simple
+    # blocking join keeps the process running without the dev server.
+    bot_thread.join()
