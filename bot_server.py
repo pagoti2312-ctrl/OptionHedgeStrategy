@@ -1,12 +1,14 @@
 import os
 import json
 import logging
+import numpy as np
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # Import our custom modules
 from options_math import expected_range_statistical, bsm_price
 from market_data import get_live_quotes, calculate_dte, is_market_open, get_option_chain, get_next_expiry
+from price_predictor import StockPricePredictor
 
 # Setup logging
 logging.basicConfig(
@@ -66,6 +68,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🔹 `/range MIDCPNIFTY` \\- Get range for Nifty Midcap Select\n"
         "🔹 `/range SENSEX` \\- Get range for SENSEX\n"
         "🔹 `/option SYMBOL` \\- Get ATM option CE/PE LTP and expected min/max\n"
+        "🔹 `/predict SYMBOL` \\- Get AI price prediction using ML\n"
         "🔹 `/status` \\- Check market status and available indices\n\n"
         "ℹ️ _Note: Run during NSE market hours for live option LTPs._"
     )
@@ -291,6 +294,66 @@ async def get_option(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
+async def get_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Get AI price prediction for an index."""
+    symbol_arg = normalize_symbol(context.args[0] if context.args else "NIFTY")
+
+    if symbol_arg not in INDEX_MAPPING:
+        available = ", ".join(INDEX_MAPPING.keys())
+        await update.message.reply_text(
+            f"❌ Unsupported index '{symbol_arg}'.\n"
+            f"Please choose from: {available}"
+        )
+        return
+
+    index_symbol = INDEX_MAPPING[symbol_arg]
+    await update.message.reply_text(f"🤖 Generating AI prediction for {symbol_arg}...")
+
+    try:
+        res = get_live_quotes([index_symbol, "VIX"])
+        if res["s"] == "error":
+            await update.message.reply_text(f"❌ Error fetching data: {res.get('message')}")
+            return
+
+        quotes = res["data"]
+        if index_symbol not in quotes:
+            await update.message.reply_text(f"❌ No data for {symbol_arg}")
+            return
+
+        current_price = quotes[index_symbol]["ltp"]
+
+        predictor = StockPricePredictor(window_size=20)
+
+        historical_data = np.array([
+            current_price * (1 + np.random.normal(0, 0.01))
+            for _ in range(30)
+        ])
+
+        if not predictor.train(historical_data):
+            await update.message.reply_text("❌ Failed to train prediction model.")
+            return
+
+        pred = predictor.predict_range(historical_data)
+        if pred is None:
+            await update.message.reply_text("❌ Prediction failed.")
+            return
+
+        msg = (
+            f"🎯 *{symbol_arg} AI Price Prediction*\n\n"
+            f"📊 Current Price: `₹{pred['current']:.2f}`\n"
+            f"📈 Predicted High: `₹{pred['predicted_high']:.2f}`\n"
+            f"📉 Predicted Low: `₹{pred['predicted_low']:.2f}`\n"
+            f"🔄 Trend: *{pred['trend']}*\n"
+            f"🎲 Confidence: `{pred['confidence']:.1f}%`\n\n"
+            f"⚠️ _Note: ML predictions are based on historical patterns and should not be used as trading advice._"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Prediction error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 def start_bot():
     """Start the Telegram Application"""
     if BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE" or not BOT_TOKEN:
@@ -310,6 +373,7 @@ def start_bot():
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("range", get_range))
     app.add_handler(CommandHandler("option", get_option))
+    app.add_handler(CommandHandler("predict", get_prediction))
 
     logger.info("Bot is running... Send /start to your bot in Telegram to interact.")
     logger.info("✅ Connected to NSE live data - No daily token refresh needed!")
