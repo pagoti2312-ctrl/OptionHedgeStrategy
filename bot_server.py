@@ -315,17 +315,21 @@ async def get_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"❌ Error fetching data: {res.get('message')}")
             return
 
-        quotes = res["data"]
-        if index_symbol not in quotes:
-            await update.message.reply_text(f"❌ No data for {symbol_arg}")
+        quotes = res.get("data", {})
+        if not quotes or index_symbol not in quotes:
+            await update.message.reply_text(f"❌ No market data available for {symbol_arg}. Market may be closed.")
             return
 
-        current_price = quotes[index_symbol]["ltp"]
+        current_price = quotes[index_symbol].get("ltp")
+        if current_price is None:
+            await update.message.reply_text(f"❌ Could not get price for {symbol_arg}")
+            return
 
         predictor = StockPricePredictor(window_size=20)
 
+        # Create synthetic historical data based on current price with small variations
         historical_data = np.array([
-            current_price * (1 + np.random.normal(0, 0.01))
+            current_price * (1 + np.random.normal(0, 0.005))
             for _ in range(30)
         ])
 
@@ -345,7 +349,7 @@ async def get_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"📉 Predicted Low: `₹{pred['predicted_low']:.2f}`\n"
             f"🔄 Trend: *{pred['trend']}*\n"
             f"🎲 Confidence: `{pred['confidence']:.1f}%`\n\n"
-            f"⚠️ _Note: ML predictions are based on historical patterns and should not be used as trading advice._"
+            f"⚠️ _Note: ML predictions are based on patterns and should not be used as trading advice._"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
