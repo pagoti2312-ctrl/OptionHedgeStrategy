@@ -2,11 +2,27 @@ from flask import Flask, render_template, jsonify, request
 import numpy as np
 import json
 import logging
-from price_predictor import StockPricePredictor
-from rl_trading_agent import RLTradingAgent
-from backtest_engine import BacktestEngine
+import os
 
-app = Flask(__name__)
+try:
+    from price_predictor import StockPricePredictor
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.error(f"Failed to import StockPricePredictor: {e}")
+
+try:
+    from rl_trading_agent import RLTradingAgent
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.error(f"Failed to import RLTradingAgent: {e}")
+
+try:
+    from backtest_engine import BacktestEngine
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.error(f"Failed to import BacktestEngine: {e}")
+
+app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -17,7 +33,17 @@ INDEX_SYMBOLS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
 @app.route('/')
 def index():
     """Dashboard home page."""
-    return render_template('index.html', symbols=INDEX_SYMBOLS)
+    try:
+        return render_template('index.html', symbols=INDEX_SYMBOLS)
+    except Exception as e:
+        logger.error(f"Template error: {e}")
+        return jsonify({"error": str(e), "status": "template_load_failed"}), 500
+
+
+@app.route('/api/health')
+def health():
+    """Health check endpoint."""
+    return jsonify({"status": "ok", "app": "dashboard"})
 
 
 @app.route('/api/predict/<symbol>')
@@ -171,12 +197,6 @@ def api_backtest(symbol):
     except Exception as e:
         logger.error(f"Backtest error: {e}")
         return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/health')
-def health():
-    """Health check endpoint."""
-    return jsonify({"status": "ok"})
 
 
 if __name__ == '__main__':
