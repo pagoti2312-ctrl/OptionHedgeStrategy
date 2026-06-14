@@ -30,6 +30,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+print("[bot_server] logging configured", flush=True)
 
 CONFIG_FILE = "fyers_config.json"
 
@@ -53,10 +54,12 @@ def load_config():
 # Initialize config — env var takes precedence over the JSON file so that
 # Railway secrets work without baking credentials into the image.
 config = load_config()
+print("[bot_server] config loaded", flush=True)
 BOT_TOKEN = (
     os.environ.get("TELEGRAM_BOT_TOKEN")
     or config.get("telegram_bot_token", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
 )
+print(f"[bot_server] BOT_TOKEN set (configured={BOT_TOKEN not in ('YOUR_TELEGRAM_BOT_TOKEN_HERE', '', None)})", flush=True)
 
 # Index symbol mapping (provider-agnostic)
 INDEX_MAPPING = {
@@ -66,6 +69,7 @@ INDEX_MAPPING = {
     "MIDCPNIFTY": "MIDCPNIFTY",
     "SENSEX": "SENSEX"
 }
+print("[bot_server] INDEX_MAPPING defined", flush=True)
 
 
 def normalize_symbol(raw_symbol: str) -> str:
@@ -551,6 +555,7 @@ def _register_webhook() -> None:
 # ---------------------------------------------------------------------------
 
 flask_app = Flask(__name__)
+print("[bot_server] Flask app created", flush=True)
 
 
 @flask_app.before_request
@@ -588,11 +593,15 @@ def telegram_webhook():
     loop.run_until_complete(_bot_app.process_update(update))
     return jsonify({"ok": True}), 200
 
+print(f"[bot_server] route registered: POST {WEBHOOK_PATH}", flush=True)
+
 
 @flask_app.route("/health")
 def health():
     """Health check endpoint for Railway's load balancer."""
     return jsonify({"status": "ok", "service": "telegram-bot"}), 200
+
+print("[bot_server] route registered: GET /health", flush=True)
 
 
 @flask_app.route("/")
@@ -605,6 +614,10 @@ def index():
         "webhook_path": WEBHOOK_PATH,
     }), 200
 
+print("[bot_server] route registered: GET /", flush=True)
+
+
+print("[bot_server] module load complete — Flask app ready", flush=True)
 
 if __name__ == "__main__":
     # Local development: run Flask's built-in server on port 5000.
