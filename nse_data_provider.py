@@ -45,54 +45,54 @@ class NSEDataProvider(MarketDataProvider):
     def get_live_quotes(self, symbols_list: List[str]) -> Dict[str, Any]:
         """
         Fetch live quotes from NSE (true live, no delays).
-        
+
         symbols_list format: ["NIFTY", "BANKNIFTY", "VIX"] or direct NSE symbols
         """
         try:
             quotes = {}
-            
+
             for symbol in symbols_list:
                 try:
                     # Map friendly names to NSE symbols if needed
                     nse_symbol = self.index_symbols.get(symbol, symbol)
-                    
+
                     # Get live quote from NSE
                     quote_data = nsepython.nse_quote(nse_symbol)
-                    
+
                     if quote_data and isinstance(quote_data, dict):
-                        data = quote_data.get("data", {})
-                        if data:
+                        # Handle different response formats from nsepython
+                        data = quote_data.get("data") or quote_data
+
+                        if isinstance(data, dict) and ("lastPrice" in data or "ltp" in data or "close" in data):
+                            ltp = float(data.get("lastPrice") or data.get("ltp") or data.get("close") or 0)
                             quotes[symbol] = {
-                                "ltp": float(data.get("lastPrice", 0)),
-                                "open": float(data.get("openPrice", 0)),
-                                "high": float(data.get("highPrice", 0)),
-                                "low": float(data.get("lowPrice", 0)),
-                                "close": float(data.get("previousClose", 0)),
-                                "change": float(data.get("change", 0)),
-                                "change_pct": float(data.get("pChange", 0))
+                                "ltp": ltp,
+                                "open": float(data.get("openPrice") or data.get("open") or 0),
+                                "high": float(data.get("highPrice") or data.get("high") or 0),
+                                "low": float(data.get("lowPrice") or data.get("low") or 0),
+                                "close": float(data.get("previousClose") or data.get("close") or 0),
+                                "change": float(data.get("change") or 0),
+                                "change_pct": float(data.get("pChange") or data.get("changepercent") or 0)
                             }
                         else:
-                            logger.warning(f"No data for symbol: {symbol}")
+                            logger.warning(f"No valid price data for symbol: {symbol}, got: {data}")
                     else:
-                        logger.warning(f"Invalid response for symbol: {symbol}")
-                        
+                        logger.warning(f"Invalid response for symbol: {symbol}: {quote_data}")
+
                 except Exception as e:
                     logger.error(f"Error fetching quote for {symbol}: {str(e)}")
-                    quotes[symbol] = {
-                        "error": str(e)
-                    }
-            
+
             if not quotes:
                 return {
                     "s": "error",
                     "message": "Failed to fetch any quotes from NSE"
                 }
-            
+
             return {
                 "s": "ok",
                 "data": quotes
             }
-            
+
         except Exception as e:
             logger.error(f"NSE quote fetch error: {str(e)}")
             return {
