@@ -1,9 +1,10 @@
-import os
+import asyncio
 import json
 import logging
-import threading
+import os
+
 import numpy as np
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -39,9 +40,13 @@ def load_config():
         return json.load(f)
 
 
-# Initialize config
+# Initialize config — env var takes precedence over the JSON file so that
+# Railway secrets work without baking credentials into the image.
 config = load_config()
-BOT_TOKEN = config.get("telegram_bot_token", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
+BOT_TOKEN = (
+    os.environ.get("TELEGRAM_BOT_TOKEN")
+    or config.get("telegram_bot_token", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
+)
 
 # Index symbol mapping (provider-agnostic)
 INDEX_MAPPING = {
@@ -425,20 +430,31 @@ async def get_trade_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
-def start_bot():
-    """Start the Telegram Application (runs in a background thread)."""
-    if BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE" or not BOT_TOKEN:
-        print("=========================================================")
-        print("WARNING: Telegram Bot Token is not configured!")
-        print("Please edit 'fyers_config.json' and add your token.")
-        print("Get your token by messaging @BotFather on Telegram.")
-        print("=========================================================")
-        return
+# ---------------------------------------------------------------------------
+# Telegram Application — built once at module level, shared across requests.
+# Webhook mode: Telegram POSTs updates to /telegram/webhook; no background
+# thread or polling loop is needed, so asyncio wakeup-fd issues are avoided.
+# ---------------------------------------------------------------------------
 
-    logger.info("Initializing Telegram Option Bot (using NSE live data provider)...")
+_bot_app: Application | None = None
+_bot_loop: asyncio.AbstractEventLoop | None = None
+
+WEBHOOK_PATH = "/telegram/webhook"
+
+
+def _build_bot_app() -> Application | None:
+    """Build and initialise the Telegram Application. Returns None if the
+    token is not configured."""
+    if BOT_TOKEN in ("YOUR_TELEGRAM_BOT_TOKEN_HERE", "", None):
+        logger.warning(
+            "Telegram Bot Token is not configured. "
+            "Set TELEGRAM_BOT_TOKEN env var or edit fyers_config.json."
+        )
+        return None
+
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Register handlers
+    # Register command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("status", status))
@@ -447,9 +463,83 @@ def start_bot():
     app.add_handler(CommandHandler("predict", get_prediction))
     app.add_handler(CommandHandler("trade_signal", get_trade_signal))
 
-    logger.info("Bot is running... Send /start to your bot in Telegram to interact.")
-    logger.info("✅ Connected to NSE live data - No daily token refresh needed!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    return app
+
+
+def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
+    """Return a running event loop, creating and starting one if needed.
+
+    gunicorn workers don't have a running loop by default, so we create a
+    dedicated loop for the bot and run it in the background just enough to
+    drive coroutines synchronously via run_until_complete."""
+    global _bot_loop
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+        return loop
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        _bot_loop = loop
+        return loop
+
+
+def _ensure_bot_initialized() -> None:
+    """Initialise the bot application exactly once (idempotent)."""
+    global _bot_app
+    if _bot_app is not None:
+        return
+
+    app = _build_bot_app()
+    if app is None:
+        return
+
+    loop = _get_or_create_event_loop()
+    loop.run_until_complete(app.initialize())
+    _bot_app = app
+    logger.info("Telegram bot application initialised (webhook mode).")
+    logger.info("✅ Connected to NSE live data — no daily token refresh needed!")
+
+
+def _register_webhook() -> None:
+    """Tell Telegram where to send updates.
+
+    Reads RAILWAY_PUBLIC_DOMAIN (set automatically by Railway) or
+    WEBHOOK_BASE_URL (manual override) to construct the full webhook URL.
+    Safe to call multiple times — skips silently if the token is missing."""
+    if _bot_app is None:
+        return
+
+    base_url = os.environ.get("WEBHOOK_BASE_URL") or (
+        f"https://{os.environ['RAILWAY_PUBLIC_DOMAIN']}"
+        if os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+        else None
+    )
+
+    if not base_url:
+        logger.warning(
+            "Webhook URL not set: define WEBHOOK_BASE_URL or deploy on Railway "
+            "(RAILWAY_PUBLIC_DOMAIN is set automatically)."
+        )
+        return
+
+    webhook_url = base_url.rstrip("/") + WEBHOOK_PATH
+    loop = _get_or_create_event_loop()
+    loop.run_until_complete(
+        _bot_app.bot.set_webhook(
+            url=webhook_url,
+            allowed_updates=Update.ALL_TYPES,
+        )
+    )
+    logger.info("Telegram webhook registered: %s", webhook_url)
+
+
+# Initialise the bot and register the webhook when the module is imported
+# (i.e. when gunicorn loads the WSGI app).  This runs in the main thread of
+# each worker process, so asyncio has no objections.
+_ensure_bot_initialized()
+_register_webhook()
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +547,23 @@ def start_bot():
 # ---------------------------------------------------------------------------
 
 flask_app = Flask(__name__)
+
+
+@flask_app.route(WEBHOOK_PATH, methods=["POST"])
+def telegram_webhook():
+    """Receive an update from Telegram and dispatch it to the bot."""
+    if _bot_app is None:
+        logger.error("Webhook received but bot is not initialised.")
+        return jsonify({"error": "bot not initialised"}), 503
+
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"error": "invalid JSON"}), 400
+
+    loop = _get_or_create_event_loop()
+    update = Update.de_json(data, _bot_app.bot)
+    loop.run_until_complete(_bot_app.process_update(update))
+    return jsonify({"ok": True}), 200
 
 
 @flask_app.route("/health")
@@ -471,21 +578,12 @@ def index():
     return jsonify({
         "status": "running",
         "service": "Indian Indices Option Range Predictor Bot",
-        "bot_configured": BOT_TOKEN not in ("YOUR_TELEGRAM_BOT_TOKEN_HERE", ""),
+        "bot_configured": BOT_TOKEN not in ("YOUR_TELEGRAM_BOT_TOKEN_HERE", "", None),
+        "webhook_path": WEBHOOK_PATH,
     }), 200
 
 
-# ---------------------------------------------------------------------------
-# Start the Telegram bot polling in a background daemon thread at import time
-# so it runs whether the module is executed directly or loaded by gunicorn.
-# ---------------------------------------------------------------------------
-bot_thread = threading.Thread(target=start_bot, name="telegram-bot", daemon=True)
-bot_thread.start()
-logger.info("Telegram bot thread started.")
-
 if __name__ == "__main__":
-    # When run directly (e.g. for local development), start gunicorn
-    # programmatically or just let the module-level thread keep the process
-    # alive via the gunicorn start command.  For convenience, a simple
-    # blocking join keeps the process running without the dev server.
-    bot_thread.join()
+    # Local development: run Flask's built-in server on port 5000.
+    # Set WEBHOOK_BASE_URL to an ngrok/tunnel URL so Telegram can reach you.
+    flask_app.run(host="0.0.0.0", port=5000, debug=False)
