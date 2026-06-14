@@ -1,0 +1,7 @@
+{
+    "market_data_provider": "nse",
+    "client_id": "8UFYKQNBXK-100",
+    "secret_key": "LTTBDDL8QH",
+    "redirect_uri": "http://127.0.0.1:8000/",
+    "telegram_bot_token": "8222895873:AAGfVUAEPj8fWPB9fcj6Wf4MdQZwOjd5CZI"
+}

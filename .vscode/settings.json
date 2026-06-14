@@ -1,0 +1,12 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python fetch_nifty_atm\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"import nsepython as n, json; fc=n\\.option_chain\\('NIFTY'\\); print\\(type\\(fc\\)\\); import pprint; pprint\\.pprint\\(list\\(fc\\.keys\\(\\)\\)\\[:20\\]\\); records=fc\\.get\\('records'\\) or \\{\\}; print\\('expiryDates:', records\\.get\\('expiryDates'\\) or records\\.get\\('expiry_dates'\\) or \\[\\]\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
