@@ -1,2 +1,2 @@
-web: python dashboard.py
-worker: python bot_server.py
+web: gunicorn --bind 0.0.0.0:5000 --workers 1 --worker-class sync bot_server:flask_app
+
