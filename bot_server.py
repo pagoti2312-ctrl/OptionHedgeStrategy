@@ -535,18 +535,25 @@ def _register_webhook() -> None:
     logger.info("Telegram webhook registered: %s", webhook_url)
 
 
-# Initialise the bot and register the webhook when the module is imported
-# (i.e. when gunicorn loads the WSGI app).  This runs in the main thread of
-# each worker process, so asyncio has no objections.
-_ensure_bot_initialized()
-_register_webhook()
-
-
 # ---------------------------------------------------------------------------
 # Flask HTTP server — satisfies Railway's health-check on port 5000
 # ---------------------------------------------------------------------------
 
 flask_app = Flask(__name__)
+
+
+@flask_app.before_request
+def _lazy_init_bot():
+    """Initialise the bot and register the webhook on the first real request.
+
+    Skipped for /health so that the load-balancer health check never blocks
+    on Telegram API calls.  Both functions are idempotent, so subsequent
+    requests are a no-op after the first successful initialisation.
+    """
+    if request.path == "/health":
+        return
+    _ensure_bot_initialized()
+    _register_webhook()
 
 
 @flask_app.route(WEBHOOK_PATH, methods=["POST"])
