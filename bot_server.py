@@ -1,18 +1,28 @@
+print("[bot_server] module load started", flush=True)
+
 import asyncio
 import json
 import logging
 import os
+
+print("[bot_server] stdlib imports done", flush=True)
 
 import numpy as np
 from flask import Flask, jsonify, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+print("[bot_server] third-party imports done (numpy, flask, telegram)", flush=True)
+
 # Import our custom modules
 from options_math import expected_range_statistical, bsm_price
+print("[bot_server] options_math imported", flush=True)
 from market_data import get_live_quotes, calculate_dte, is_market_open, get_option_chain, get_next_expiry
+print("[bot_server] market_data imported", flush=True)
 from price_predictor import StockPricePredictor
+print("[bot_server] price_predictor imported", flush=True)
 from rl_trading_agent import RLTradingAgent
+print("[bot_server] rl_trading_agent imported", flush=True)
 
 # Setup logging
 logging.basicConfig(
