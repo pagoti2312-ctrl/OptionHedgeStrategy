@@ -1,7 +1,9 @@
 import os
 import json
 import logging
+import threading
 import numpy as np
+from flask import Flask, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -424,7 +426,7 @@ async def get_trade_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 def start_bot():
-    """Start the Telegram Application"""
+    """Start the Telegram Application (runs in a background thread)."""
     if BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE" or not BOT_TOKEN:
         print("=========================================================")
         print("WARNING: Telegram Bot Token is not configured!")
@@ -450,5 +452,38 @@ def start_bot():
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
+# ---------------------------------------------------------------------------
+# Flask HTTP server — satisfies Railway's health-check on port 5000
+# ---------------------------------------------------------------------------
+
+flask_app = Flask(__name__)
+
+
+@flask_app.route("/health")
+def health():
+    """Health check endpoint for Railway's load balancer."""
+    return jsonify({"status": "ok", "service": "telegram-bot"}), 200
+
+
+@flask_app.route("/")
+def index():
+    """Simple status page."""
+    return jsonify({
+        "status": "running",
+        "service": "Indian Indices Option Range Predictor Bot",
+        "bot_configured": BOT_TOKEN not in ("YOUR_TELEGRAM_BOT_TOKEN_HERE", ""),
+    }), 200
+
+
 if __name__ == "__main__":
-    start_bot()
+    # Start the Telegram bot polling in a background daemon thread so it
+    # doesn't block the Flask HTTP server.
+    bot_thread = threading.Thread(target=start_bot, name="telegram-bot", daemon=True)
+    bot_thread.start()
+    logger.info("Telegram bot thread started.")
+
+    # Start the Flask HTTP server on 0.0.0.0:5000 (foreground — keeps the
+    # process alive and answers Railway's health checks).
+    port = int(os.environ.get("PORT", 5000))
+    logger.info(f"Starting Flask HTTP server on 0.0.0.0:{port} ...")
+    flask_app.run(host="0.0.0.0", port=port, debug=False)
