@@ -36,14 +36,16 @@ def index():
     try:
         return render_template('index.html', symbols=INDEX_SYMBOLS)
     except Exception as e:
-        logger.error(f"Template error: {e}")
-        return jsonify({"error": str(e), "status": "template_load_failed"}), 500
+        error_msg = f"Error loading dashboard: {str(e)}"
+        logger.error(error_msg)
+        return jsonify({"error": error_msg}), 500
 
 
-@app.route('/api/health')
-def health():
-    """Health check endpoint."""
-    return jsonify({"status": "ok", "app": "dashboard"})
+@app.errorhandler(Exception)
+def handle_error(error):
+    """Catch all exceptions and log them."""
+    logger.error(f"Unhandled exception: {str(error)}", exc_info=True)
+    return jsonify({"error": str(error), "type": type(error).__name__}), 500
 
 
 @app.route('/api/predict/<symbol>')
