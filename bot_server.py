@@ -1,28 +1,18 @@
-print("[bot_server] module load started", flush=True)
-
 import asyncio
 import json
 import logging
 import os
-
-print("[bot_server] stdlib imports done", flush=True)
 
 import numpy as np
 from flask import Flask, jsonify, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-print("[bot_server] third-party imports done (numpy, flask, telegram)", flush=True)
-
 # Import our custom modules
 from options_math import expected_range_statistical, bsm_price
-print("[bot_server] options_math imported", flush=True)
 from market_data import get_live_quotes, calculate_dte, is_market_open, get_option_chain, get_next_expiry
-print("[bot_server] market_data imported", flush=True)
 from price_predictor import StockPricePredictor
-print("[bot_server] price_predictor imported", flush=True)
 from rl_trading_agent import RLTradingAgent
-print("[bot_server] rl_trading_agent imported", flush=True)
 
 # Setup logging
 logging.basicConfig(
@@ -478,22 +468,24 @@ def _build_bot_app() -> Application | None:
 
 
 def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
-    """Return a running event loop, creating and starting one if needed.
+    """Return a usable event loop for the current gunicorn worker.
 
-    gunicorn workers don't have a running loop by default, so we create a
-    dedicated loop for the bot and run it in the background just enough to
-    drive coroutines synchronously via run_until_complete."""
+    Python 3.10+ deprecates implicit loop creation via get_event_loop() in
+    contexts where no current loop is set (e.g. gunicorn sync worker threads).
+    We always prefer an existing non-closed loop, but fall back to creating and
+    registering a fresh one so run_until_complete() never blocks indefinitely."""
     global _bot_loop
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("closed")
+        loop = asyncio.get_running_loop()
         return loop
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        _bot_loop = loop
-        return loop
+        pass
+    if _bot_loop is not None and not _bot_loop.is_closed():
+        return _bot_loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _bot_loop = loop
+    return loop
 
 
 def _ensure_bot_initialized() -> None:
