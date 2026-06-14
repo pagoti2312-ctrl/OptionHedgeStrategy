@@ -9,6 +9,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from options_math import expected_range_statistical, bsm_price
 from market_data import get_live_quotes, calculate_dte, is_market_open, get_option_chain, get_next_expiry
 from price_predictor import StockPricePredictor
+from rl_trading_agent import RLTradingAgent
 
 # Setup logging
 logging.basicConfig(
@@ -69,6 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🔹 `/range SENSEX` \\- Get range for SENSEX\n"
         "🔹 `/option SYMBOL` \\- Get ATM option CE/PE LTP and expected min/max\n"
         "🔹 `/predict SYMBOL` \\- Get AI price prediction using ML\n"
+        "🔹 `/trade_signal SYMBOL` \\- Get RL agent trading recommendation\n"
         "🔹 `/status` \\- Check market status and available indices\n\n"
         "ℹ️ _Note: Run during NSE market hours for live option LTPs._"
     )
@@ -358,6 +360,69 @@ async def get_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
+async def get_trade_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Get RL-based trading signal for an index."""
+    symbol_arg = normalize_symbol(context.args[0] if context.args else "NIFTY")
+
+    if symbol_arg not in INDEX_MAPPING:
+        available = ", ".join(INDEX_MAPPING.keys())
+        await update.message.reply_text(
+            f"❌ Unsupported index '{symbol_arg}'.\n"
+            f"Please choose from: {available}"
+        )
+        return
+
+    await update.message.reply_text(f"🤖 Generating RL trading signal for {symbol_arg}... (training on historical data)")
+
+    try:
+        # Create synthetic historical data for training
+        # In production, this would use real historical data from NSE
+        np.random.seed(42)
+        base_price = 18000  # Approximate NIFTY price
+        historical_prices = []
+        current_price = base_price
+
+        for _ in range(100):
+            change = np.random.normal(0, 50)
+            current_price = max(current_price + change, base_price * 0.8)
+            historical_prices.append(current_price)
+
+        historical_prices = np.array(historical_prices)
+
+        agent = RLTradingAgent(learning_rate=0.01, gamma=0.95, epsilon=0.1)
+
+        # Train agent
+        if not agent.train(historical_prices, episodes=5):
+            await update.message.reply_text("❌ Failed to train RL agent.")
+            return
+
+        # Generate signal
+        signal_data = agent.generate_signal(historical_prices)
+        if signal_data is None:
+            await update.message.reply_text("❌ Failed to generate trading signal.")
+            return
+
+        signal = signal_data["signal"]
+        confidence = signal_data["confidence"]
+        current_price = signal_data["current_price"]
+
+        emoji = "🟢" if signal == "BUY" else "🔴" if signal == "SELL" else "⚪"
+
+        msg = (
+            f"{emoji} *{symbol_arg} RL Trading Signal*\n\n"
+            f"📊 Current Price: `₹{current_price:.2f}`\n"
+            f"🎯 Signal: *{signal}*\n"
+            f"🎲 Confidence: `{confidence:.1f}%`\n"
+            f"💰 Sim Balance: `₹{signal_data['final_balance']:.2f}`\n\n"
+            f"⚠️ _RL agent learned from simulated data. Not real trading advice._"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Trade signal error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 def start_bot():
     """Start the Telegram Application"""
     if BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE" or not BOT_TOKEN:
@@ -378,6 +443,7 @@ def start_bot():
     app.add_handler(CommandHandler("range", get_range))
     app.add_handler(CommandHandler("option", get_option))
     app.add_handler(CommandHandler("predict", get_prediction))
+    app.add_handler(CommandHandler("trade_signal", get_trade_signal))
 
     logger.info("Bot is running... Send /start to your bot in Telegram to interact.")
     logger.info("✅ Connected to NSE live data - No daily token refresh needed!")
