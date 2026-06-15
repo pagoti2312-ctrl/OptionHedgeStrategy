@@ -4,7 +4,8 @@
     "builder": "DOCKERFILE"
   },
   "deploy": {
-    "startCommand": "gunicorn --bind 0.0.0.0:5000 --workers 1 --worker-class sync bot_server:flask_app",
+    "startCommand": "gunicorn bot_server:flask_app --bind 0.0.0.0:8080 --workers 1 --timeout 120",
+    "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
   }
 }
