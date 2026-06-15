@@ -233,7 +233,9 @@ class NSEDataProvider(MarketDataProvider):
 
     def is_market_open(self) -> bool:
         try:
-            now = datetime.datetime.now()
+            # IST = UTC + 5:30 (Railway servers run on UTC)
+            ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+            now = datetime.datetime.now(ist)
             if now.weekday() >= 5:
                 return False
             open_  = now.replace(hour=9,  minute=15, second=0, microsecond=0)
